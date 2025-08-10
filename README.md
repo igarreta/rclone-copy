@@ -4,12 +4,15 @@ Secondary backup copy system using rclone with cron-based scheduling. This Pytho
 
 ## Features
 
+- **Dual backup modes**: Support for both rclone remote storage and local filesystem backups
 - **Cron-based scheduling**: Flexible scheduling using cron syntax for daily, weekly, monthly, or custom intervals
 - **Multiple backup sources**: Configure multiple directories with individual settings
 - **Remote storage support**: Works with any rclone-supported remote (OneDrive, Google Drive, S3, etc.)
+- **Local filesystem backups**: Direct backup to local directories when run with path argument
 - **Size and age filtering**: Control backup size and file age limits
 - **Retention management**: Automatic cleanup of old backups
 - **Pre-flight checks**: Validates sources, destinations, and available space before starting
+- **Dual logging**: Console output for CLI usage, file logging for cron jobs
 - **Email notifications**: Comprehensive backup summaries with metrics
 - **Robust error handling**: Continues processing other backups if one fails
 
@@ -136,15 +139,42 @@ rclone lsd onedrive:/      # List root directories
 ## Usage
 
 ### Manual Execution
+
+**Rclone Mode (Remote Storage):**
 ```bash
-# Run immediately (respects schedules)
+# Run with rclone remote storage (respects schedules)
 uv run python main.py
 
 # Check configuration without running backups
 uv run python -c "from src.config import load_config; print('Config valid!')"
 ```
 
+**Local Filesystem Mode:**
+```bash
+# Run with local filesystem backup to specified path
+uv run python main.py /path/to/backup/destination
+
+# Example: backup to external drive
+uv run python main.py /mnt/external_drive/backups
+
+# Example: backup to network share
+uv run python main.py /mnt/nas/backup_storage
+```
+
+### Key Differences Between Modes
+
+| Feature | Rclone Mode | Local Filesystem Mode |
+|---------|-------------|----------------------|
+| **Trigger** | `python main.py` | `python main.py /path` |
+| **Destination** | Remote storage (cloud) | Local directory |
+| **Logging** | File only | Console + File |
+| **Space Check** | 200GB remote check | Skipped |
+| **Directory Structure** | `remote:/backup_name_timestamp` | `path/backup_name_timestamp` |
+| **Use Case** | Scheduled/cron jobs | Interactive/manual use |
+
 ### Automated Execution (Cron)
+
+**Rclone Mode (Recommended for automation):**
 
 Create a cron job to run daily at 5:00 AM:
 
@@ -152,17 +182,27 @@ Create a cron job to run daily at 5:00 AM:
 # Edit cron jobs
 sudo crontab -e
 
-# Add this line:
+# Add this line (uses rclone mode):
 0 5 * * * cd /home/rsi/rclone-copy && uv run python main.py >> log/cron.log 2>&1
 ```
 
 Or create a system cron file:
 ```bash
 sudo tee /etc/cron.d/rclone-backup << 'EOF'
-# rclone-copy backup job - runs daily at 5:00 AM
+# rclone-copy backup job - runs daily at 5:00 AM (rclone mode)
 0 5 * * * rsi cd /home/rsi/rclone-copy && uv run python main.py >> log/cron.log 2>&1
 EOF
 ```
+
+**Local Filesystem Mode in Cron:**
+
+If you want to use local filesystem mode in cron (less common):
+```bash
+# Backup to local directory via cron
+0 5 * * * cd /home/rsi/rclone-copy && uv run python main.py /mnt/backup_drive >> log/cron.log 2>&1
+```
+
+> **Note**: Local filesystem mode is primarily designed for interactive/manual use with console output. For automated backups, rclone mode is typically preferred.
 
 ### Email Configuration
 
@@ -186,6 +226,16 @@ SMTP_TOKEN=your_app_password
 - `WARNING`: Non-critical issues (cleanup failures, etc.)
 - `ERROR`: Backup failures, configuration issues
 - `CRITICAL`: System failures, pre-flight check failures
+
+### Output Locations
+
+**Rclone Mode (Cron/Automated):**
+- Logs: `log/rclone_copy.log` (file only)
+- Output: Redirected to log files
+
+**Local Filesystem Mode (CLI/Interactive):**
+- Logs: `log/rclone_copy.log` + console output
+- Output: Real-time console feedback + file logging
 
 ## Troubleshooting
 
@@ -214,6 +264,18 @@ ls -la /path/to/source/directory
 ```bash
 # Test email configuration
 uv run python -c "from python_utils.email_utils import EmailNotifier; print('Email config OK')"
+```
+
+**Local filesystem mode issues:**
+```bash
+# Test local backup manually
+uv run python main.py /tmp/test_backup
+
+# Check destination permissions
+ls -la /path/to/backup/destination
+
+# Monitor real-time output (local mode shows console output)
+uv run python main.py /path/to/destination
 ```
 
 ### Exit Codes

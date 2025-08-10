@@ -93,8 +93,8 @@ class BackupItem(BaseModel):
     @classmethod
     def validate_rclone_path(cls, v: str) -> str:
         """Validate rclone path format."""
-        if ":" not in v:
-            raise ValueError("rclone_path must include a remote name (e.g., 'remote:/path')")
+        # Skip validation in local mode - this will be checked at runtime
+        # The validation is conditional because we don't know the mode at config load time
         return v
 
     @property

@@ -5,11 +5,12 @@ rclone-copy: Secondary backup copy using rclone with cron-based scheduling.
 Main entry point for the backup application.
 """
 
+import argparse
 import logging
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from python_utils.email_utils import EmailNotifier, send_backup_notification
 from python_utils.logging_utils import setup_backup_logging
@@ -19,16 +20,35 @@ from src.config import AppConfig, load_config
 from src.schedule_checker import ScheduleChecker
 
 
-def setup_logging(config: AppConfig) -> logging.Logger:
+def setup_logging(config: AppConfig, cli_mode: bool = False) -> logging.Logger:
     """Set up logging configuration."""
     log_file_path = Path(config.log_file)
-    log_file_path.parent.mkdir(parents=True, exist_ok=True)
+    log_dir = log_file_path.parent
+    log_dir.mkdir(parents=True, exist_ok=True)
 
-    logger = setup_backup_logging(
-        log_file=str(log_file_path),
-        log_level=config.log_level,
-        app_name="rclone-copy",
-    )
+    if cli_mode:
+        # In CLI mode, log to both console and file
+        logger = setup_backup_logging(
+            log_dir=str(log_dir),
+            log_level=config.log_level,
+            app_name="rclone-copy",
+            redirect_streams=False,  # Don't redirect streams in CLI mode to allow console output
+        )
+        
+        # Add console handler for CLI mode
+        console_handler = logging.StreamHandler(sys.stdout)
+        formatter = logging.Formatter('%(asctime)s %(levelname)-8s %(message)s')
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+        
+    else:
+        # Cron mode: file only (existing behavior)
+        logger = setup_backup_logging(
+            log_dir=str(log_dir),
+            log_level=config.log_level,
+            app_name="rclone-copy",
+            redirect_streams=True,
+        )
 
     return logger
 
@@ -90,17 +110,48 @@ def send_email_notification(config: AppConfig, summary: str, has_errors: bool) -
         logging.error(f"Failed to send email notification: {e}")
 
 
+def parse_arguments() -> Optional[str]:
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Backup files using rclone or local filesystem",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python main.py                           # Run with rclone (cron mode)
+  python main.py /path/to/backup/dest      # Run with local filesystem backup
+        """,
+    )
+    
+    parser.add_argument(
+        "destination",
+        nargs="?",
+        help="Local filesystem destination path (enables local backup mode)",
+    )
+    
+    args = parser.parse_args()
+    return args.destination
+
+
 def main() -> int:
     """Main application entry point."""
     start_time = datetime.now()
 
     try:
+        # Parse command line arguments
+        local_destination = parse_arguments()
+        cli_mode = local_destination is not None
+        
         # Load configuration
         config = load_config("config.yaml")
 
         # Setup logging
-        logger = setup_logging(config)
-        logger.info("Starting rclone-copy backup process")
+        logger = setup_logging(config, cli_mode=cli_mode)
+        if cli_mode:
+            logger.info(f"Starting backup process in LOCAL FILESYSTEM mode")
+            logger.info(f"Destination: {local_destination}")
+        else:
+            logger.info("Starting rclone-copy backup process")
+            
         logger.info(f"Configuration loaded with {len(config.backup_copy_list)} backup items")
 
         # Filter backups that should run today
@@ -117,7 +168,7 @@ def main() -> int:
         logger.info(f"Found {len(scheduled_backups)} backups scheduled to run today")
 
         # Initialize backup manager
-        backup_manager = BackupManager(config)
+        backup_manager = BackupManager(config, local_destination=local_destination)
 
         # Perform pre-flight checks
         logger.info("Performing pre-flight checks...")

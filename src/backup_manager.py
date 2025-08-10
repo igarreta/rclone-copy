@@ -2,6 +2,7 @@
 
 import json
 import logging
+import shutil
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -229,12 +230,130 @@ class RcloneManager:
             return False
 
 
+class LocalBackupManager:
+    """Handles local filesystem backup operations."""
+
+    def __init__(self, config: AppConfig, destination_path: str):
+        self.config = config
+        self.destination_path = Path(destination_path)
+        self.logger = logging.getLogger(__name__)
+
+    def validate_destination(self) -> bool:
+        """Check if destination directory is writable."""
+        try:
+            # Ensure destination exists
+            self.destination_path.mkdir(parents=True, exist_ok=True)
+            
+            # Test write permissions
+            test_file = self.destination_path / ".write_test"
+            test_file.write_text("test")
+            test_file.unlink()
+            
+            return True
+        except (OSError, PermissionError) as e:
+            self.logger.error(f"Destination path not writable: {e}")
+            return False
+
+    def copy_to_local(
+        self, source_dir: str, destination: str, max_age_days: int = 0
+    ) -> Tuple[bool, int, str]:
+        """
+        Copy files from source to local destination.
+
+        Returns:
+            Tuple of (success, bytes_transferred, error_message)
+        """
+        try:
+            source_path = Path(source_dir)
+            dest_path = Path(destination)
+            
+            if not source_path.exists():
+                return False, 0, f"Source directory does not exist: {source_dir}"
+
+            # Get files to backup based on age criteria
+            if max_age_days > 0:
+                files_to_backup = get_files_modified_within_days(source_dir, max_age_days)
+            else:
+                # Get all files recursively
+                files_to_backup = [
+                    str(p) for p in source_path.rglob("*") if p.is_file()
+                ]
+
+            if not files_to_backup:
+                self.logger.warning(f"No files found to backup from {source_dir}")
+                return True, 0, ""
+
+            # Calculate total bytes to transfer
+            total_bytes = calculate_total_size(files_to_backup)
+            
+            # Create destination directory
+            dest_path.mkdir(parents=True, exist_ok=True)
+            
+            # Copy files while preserving structure
+            bytes_transferred = 0
+            for file_path in files_to_backup:
+                src_file = Path(file_path)
+                
+                # Calculate relative path from source
+                rel_path = src_file.relative_to(source_path)
+                dest_file = dest_path / rel_path
+                
+                # Create parent directories
+                dest_file.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Copy file
+                shutil.copy2(src_file, dest_file)
+                bytes_transferred += src_file.stat().st_size
+                
+            self.logger.info(f"Copied {len(files_to_backup)} files ({bytes_transferred} bytes)")
+            return True, bytes_transferred, ""
+
+        except Exception as e:
+            error_msg = f"Local copy failed: {e}"
+            self.logger.error(error_msg)
+            return False, 0, error_msg
+
+    def list_local_directories(self, path: str) -> List[str]:
+        """List directories in a local path."""
+        try:
+            local_path = Path(path)
+            if not local_path.exists():
+                return []
+            
+            return [d.name for d in local_path.iterdir() if d.is_dir()]
+        except Exception as e:
+            self.logger.error(f"Error listing local directories '{path}': {e}")
+            return []
+
+    def delete_local_directory(self, path: str) -> bool:
+        """Delete a local directory."""
+        try:
+            local_path = Path(path)
+            if local_path.exists():
+                shutil.rmtree(local_path)
+                self.logger.info(f"Successfully deleted local directory: {path}")
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(f"Error deleting local directory '{path}': {e}")
+            return False
+
+
 class BackupManager:
     """Main backup management class."""
 
-    def __init__(self, config: AppConfig):
+    def __init__(self, config: AppConfig, local_destination: Optional[str] = None):
         self.config = config
-        self.rclone = RcloneManager(config)
+        self.local_destination = local_destination
+        self.is_local_mode = local_destination is not None
+        
+        if self.is_local_mode:
+            self.local_manager = LocalBackupManager(config, local_destination)
+            self.rclone = None
+        else:
+            self.rclone = RcloneManager(config)
+            self.local_manager = None
+            
         self.logger = logging.getLogger(__name__)
 
     def perform_preflight_checks(self, backup_list: List[BackupItem]) -> List[str]:
@@ -246,28 +365,41 @@ class BackupManager:
         """
         errors = []
 
-        # Check rclone installation
-        if not self.rclone.validate_rclone_installation():
-            errors.append("rclone is not installed or not accessible")
-            return errors  # Can't continue without rclone
+        if self.is_local_mode:
+            # Local mode checks
+            if not self.local_manager.validate_destination():
+                errors.append(f"Local destination not accessible or writable: {self.local_destination}")
+        else:
+            # Rclone mode checks
+            if not self.rclone.validate_rclone_installation():
+                errors.append("rclone is not installed or not accessible")
+                return errors  # Can't continue without rclone
 
-        # Check source directories
+            # Validate rclone paths contain remote names
+            for backup_item in backup_list:
+                if ":" not in backup_item.rclone_path:
+                    errors.append(
+                        f"Backup '{backup_item.name}' rclone_path must include a remote name (e.g., 'remote:/path')"
+                    )
+
+            # Check remote storage space (skip in local mode as requested)
+            checked_remotes = set()
+            for backup_item in backup_list:
+                if ":" in backup_item.rclone_path:  # Only if valid format
+                    remote_name = backup_item.remote_name
+                    if remote_name not in checked_remotes:
+                        if not self.rclone.check_remote_space(remote_name):
+                            errors.append(
+                                f"Remote '{remote_name}' has insufficient free space or is not accessible"
+                            )
+                        checked_remotes.add(remote_name)
+
+        # Check source directories (common to both modes)
         for backup_item in backup_list:
             if not is_directory_accessible(backup_item.source_dir):
                 errors.append(
                     f"Source directory not accessible for backup '{backup_item.name}': {backup_item.source_dir}"
                 )
-
-        # Check remote storage space
-        checked_remotes = set()
-        for backup_item in backup_list:
-            remote_name = backup_item.remote_name
-            if remote_name not in checked_remotes:
-                if not self.rclone.check_remote_space(remote_name):
-                    errors.append(
-                        f"Remote '{remote_name}' has insufficient free space or is not accessible"
-                    )
-                checked_remotes.add(remote_name)
 
         # Check source directory sizes
         for backup_item in backup_list:
@@ -299,12 +431,24 @@ class BackupManager:
         try:
             # Create timestamped destination directory
             timestamp = start_time.strftime("%Y-%m-%d_%H-%M")
-            destination = f"{backup_item.rclone_path}_{timestamp}"
-
-            # Perform the backup
-            success, bytes_transferred, error_message = self.rclone.copy_to_remote(
-                backup_item.source_dir, destination, backup_item.max_age
-            )
+            
+            if self.is_local_mode:
+                # Local filesystem backup
+                dest_path = Path(self.local_destination) / f"{backup_item.name}_{timestamp}"
+                destination = str(dest_path)
+                
+                # Perform the backup
+                success, bytes_transferred, error_message = self.local_manager.copy_to_local(
+                    backup_item.source_dir, destination, backup_item.max_age
+                )
+            else:
+                # Rclone backup
+                destination = f"{backup_item.rclone_path}_{timestamp}"
+                
+                # Perform the backup
+                success, bytes_transferred, error_message = self.rclone.copy_to_remote(
+                    backup_item.source_dir, destination, backup_item.max_age
+                )
 
             # Get latest file date if backup was successful
             latest_file_date = None
@@ -362,35 +506,66 @@ class BackupManager:
     def _cleanup_old_backups(self, backup_item: BackupItem) -> None:
         """Clean up old backup directories based on retention policy."""
         try:
-            # List existing backup directories
-            base_path = backup_item.rclone_path.rsplit("_", 1)[0]  # Remove any existing timestamp
-            parent_path = "/".join(base_path.split("/")[:-1])
-            backup_name = base_path.split("/")[-1]
+            if self.is_local_mode:
+                # Local filesystem cleanup
+                parent_path = Path(self.local_destination)
+                backup_name = backup_item.name
+                
+                existing_dirs = self.local_manager.list_local_directories(str(parent_path))
+                
+                # Filter directories that match this backup
+                backup_dirs = []
+                for dir_name in existing_dirs:
+                    if dir_name.startswith(f"{backup_name}_") and len(dir_name) > len(backup_name) + 1:
+                        # Validate timestamp format
+                        timestamp_part = dir_name[len(backup_name) + 1:]
+                        try:
+                            datetime.strptime(timestamp_part, "%Y-%m-%d_%H-%M")
+                            backup_dirs.append((dir_name, timestamp_part))
+                        except ValueError:
+                            continue
 
-            existing_dirs = self.rclone.list_remote_directories(parent_path)
+                # Sort by timestamp (newest first)
+                backup_dirs.sort(key=lambda x: x[1], reverse=True)
 
-            # Filter directories that match this backup
-            backup_dirs = []
-            for dir_name in existing_dirs:
-                if dir_name.startswith(f"{backup_name}_") and len(dir_name) > len(backup_name) + 1:
-                    # Validate timestamp format
-                    timestamp_part = dir_name[len(backup_name) + 1:]
-                    try:
-                        datetime.strptime(timestamp_part, "%Y-%m-%d_%H-%M")
-                        backup_dirs.append((dir_name, timestamp_part))
-                    except ValueError:
-                        continue
+                # Delete old backups beyond retention limit
+                if len(backup_dirs) > backup_item.retention:
+                    dirs_to_delete = backup_dirs[backup_item.retention:]
+                    for dir_name, _ in dirs_to_delete:
+                        full_path = str(parent_path / dir_name)
+                        self.logger.info(f"Deleting old backup: {full_path}")
+                        self.local_manager.delete_local_directory(full_path)
+                        
+            else:
+                # Rclone cleanup (original logic)
+                base_path = backup_item.rclone_path.rsplit("_", 1)[0]  # Remove any existing timestamp
+                parent_path = "/".join(base_path.split("/")[:-1])
+                backup_name = base_path.split("/")[-1]
 
-            # Sort by timestamp (newest first)
-            backup_dirs.sort(key=lambda x: x[1], reverse=True)
+                existing_dirs = self.rclone.list_remote_directories(parent_path)
 
-            # Delete old backups beyond retention limit
-            if len(backup_dirs) > backup_item.retention:
-                dirs_to_delete = backup_dirs[backup_item.retention:]
-                for dir_name, _ in dirs_to_delete:
-                    full_path = f"{parent_path}/{dir_name}"
-                    self.logger.info(f"Deleting old backup: {full_path}")
-                    self.rclone.delete_remote_directory(full_path)
+                # Filter directories that match this backup
+                backup_dirs = []
+                for dir_name in existing_dirs:
+                    if dir_name.startswith(f"{backup_name}_") and len(dir_name) > len(backup_name) + 1:
+                        # Validate timestamp format
+                        timestamp_part = dir_name[len(backup_name) + 1:]
+                        try:
+                            datetime.strptime(timestamp_part, "%Y-%m-%d_%H-%M")
+                            backup_dirs.append((dir_name, timestamp_part))
+                        except ValueError:
+                            continue
+
+                # Sort by timestamp (newest first)
+                backup_dirs.sort(key=lambda x: x[1], reverse=True)
+
+                # Delete old backups beyond retention limit
+                if len(backup_dirs) > backup_item.retention:
+                    dirs_to_delete = backup_dirs[backup_item.retention:]
+                    for dir_name, _ in dirs_to_delete:
+                        full_path = f"{parent_path}/{dir_name}"
+                        self.logger.info(f"Deleting old backup: {full_path}")
+                        self.rclone.delete_remote_directory(full_path)
 
         except Exception as e:
             self.logger.warning(f"Error during cleanup for backup '{backup_item.name}': {e}")
