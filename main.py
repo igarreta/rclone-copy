@@ -154,18 +154,24 @@ def main() -> int:
             
         logger.info(f"Configuration loaded with {len(config.backup_copy_list)} backup items")
 
-        # Filter backups that should run today
-        scheduled_backups = ScheduleChecker.get_scheduled_backups(config.backup_copy_list)
+        # Filter backups that should run today (skip schedule filtering in local mode)
+        if cli_mode:
+            # Local mode: process all backup items (ignore schedule)
+            scheduled_backups = config.backup_copy_list
+            logger.info(f"Local mode: processing all {len(scheduled_backups)} backup items (schedule ignored)")
+        else:
+            # Rclone mode: filter by schedule
+            scheduled_backups = ScheduleChecker.get_scheduled_backups(config.backup_copy_list)
+            
+            if not scheduled_backups:
+                logger.info("No backups scheduled to run today")
+                # Still send a notification if configured
+                if config.email:
+                    summary = "=== Rclone Backup Summary ===\n\nNo backups were scheduled to run today."
+                    send_email_notification(config, summary, has_errors=False)
+                return 0
 
-        if not scheduled_backups:
-            logger.info("No backups scheduled to run today")
-            # Still send a notification if configured
-            if config.email:
-                summary = "=== Rclone Backup Summary ===\n\nNo backups were scheduled to run today."
-                send_email_notification(config, summary, has_errors=False)
-            return 0
-
-        logger.info(f"Found {len(scheduled_backups)} backups scheduled to run today")
+            logger.info(f"Found {len(scheduled_backups)} backups scheduled to run today")
 
         # Initialize backup manager
         backup_manager = BackupManager(config, local_destination=local_destination)
