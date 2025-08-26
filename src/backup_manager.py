@@ -37,6 +37,194 @@ class BackupResult:
         self.latest_file_date = latest_file_date
 
 
+
+class DryRunResult:
+    """Result of a dry run operation."""
+
+    def __init__(
+        self,
+        backup_name: str,
+        source_dir: str,
+        destination: str,
+        total_files: int = 0,
+        total_size: int = 0,
+        filtered_files: Optional[List[Path]] = None,
+        excluded_files: Optional[List[Path]] = None,
+        error_message: str = "",
+        success: bool = True,
+    ):
+        self.backup_name = backup_name
+        self.source_dir = source_dir
+        self.destination = destination
+        self.total_files = total_files
+        self.total_size = total_size
+        self.filtered_files = filtered_files or []
+        self.excluded_files = excluded_files or []
+        self.error_message = error_message
+        self.success = success
+
+
+class DryRunSummary:
+    """Summary of all dry run operations."""
+
+    def __init__(
+        self,
+        results: Optional[List[DryRunResult]] = None,
+    ):
+        self.results = results or []
+
+    @property
+    def total_backups(self) -> int:
+        """Total number of backup operations."""
+        return len(self.results)
+
+    @property
+    def successful_backups(self) -> int:
+        """Number of successful backup analyses."""
+        return sum(1 for r in self.results if r.success)
+
+    @property
+    def failed_backups(self) -> int:
+        """Number of failed backup analyses."""
+        return sum(1 for r in self.results if not r.success)
+
+    @property
+    def total_files(self) -> int:
+        """Total number of files across all backups."""
+        return sum(r.total_files for r in self.results if r.success)
+
+    @property
+    def total_size(self) -> int:
+        """Total size in bytes across all backups."""
+        return sum(r.total_size for r in self.results if r.success)
+
+    def add_result(self, result: DryRunResult) -> None:
+        """Add a dry run result to the summary."""
+        self.results.append(result)
+
+
+def analyze_backup_files(
+    source_dir: str, 
+    max_age_days: int = 0,
+    max_size_bytes: int = 0
+) -> Tuple[List[Path], List[Path], int]:
+    """
+    Analyze files that would be included in backup.
+    
+    Args:
+        source_dir: Source directory path
+        max_age_days: Maximum age of files in days (0 = no limit)
+        max_size_bytes: Maximum total backup size (0 = no limit)
+    
+    Returns:
+        - files_to_copy: List of files that pass filters
+        - excluded_files: List of files excluded by filters
+        - total_size: Total size of files to copy
+    """
+    source_path = Path(source_dir)
+    if not source_path.exists() or not source_path.is_dir():
+        return [], [], 0
+        
+    files_to_copy = []
+    excluded_files = []
+    total_size = 0
+    current_backup_size = 0
+    
+    # Get cutoff date for max_age filter
+    cutoff_date = None
+    if max_age_days > 0:
+        cutoff_date = datetime.now() - timedelta(days=max_age_days)
+    
+    try:
+        # Walk through all files in source directory
+        for file_path in source_path.rglob('*'):
+            if file_path.is_file():
+                try:
+                    file_stat = file_path.stat()
+                    file_size = file_stat.st_size
+                    file_mtime = datetime.fromtimestamp(file_stat.st_mtime)
+                    
+                    # Check age filter
+                    if cutoff_date and file_mtime < cutoff_date:
+                        excluded_files.append(file_path)
+                        continue
+                    
+                    # Check size limit
+                    if max_size_bytes > 0 and (current_backup_size + file_size) > max_size_bytes:
+                        excluded_files.append(file_path)
+                        continue
+                    
+                    # File passes all filters
+                    files_to_copy.append(file_path)
+                    total_size += file_size
+                    current_backup_size += file_size
+                    
+                except (OSError, PermissionError):
+                    # Skip files we can't access
+                    excluded_files.append(file_path)
+                    continue
+                    
+    except (OSError, PermissionError) as e:
+        # Handle directory access errors
+        logging.getLogger(__name__).warning(f"Cannot access directory {source_dir}: {e}")
+        return [], [], 0
+    
+    return files_to_copy, excluded_files, total_size
+
+
+def estimate_transfer_time(total_size: int, destination_type: str = "remote") -> float:
+    """
+    Estimate transfer time based on size and destination type.
+    
+    Args:
+        total_size: Total size in bytes
+        destination_type: "remote" or "local"
+        
+    Returns:
+        Estimated time in seconds
+    """
+    if total_size == 0:
+        return 0.0
+    
+    # Transfer rate estimates (bytes per second)
+    if destination_type == "local":
+        # Local disk transfer (SSD/HDD average)
+        rate_bps = 50 * 1024 * 1024  # 50 MB/s
+    else:
+        # Remote transfer (internet upload)
+        rate_bps = 5 * 1024 * 1024   # 5 MB/s (conservative estimate)
+    
+    return total_size / rate_bps
+
+
+def format_size(size_bytes: int) -> str:
+    """Format byte size in human-readable format."""
+    if size_bytes == 0:
+        return "0 B"
+    
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if size_bytes < 1024.0:
+            if unit == 'B':
+                return f"{size_bytes} {unit}"
+            else:
+                return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024.0
+    
+    return f"{size_bytes:.1f} PB"
+
+
+def format_duration(seconds: float) -> str:
+    """Format duration in human-readable format."""
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    elif seconds < 3600:
+        minutes = seconds / 60
+        return f"{minutes:.0f}m {seconds % 60:.0f}s"
+    else:
+        hours = seconds / 3600
+        minutes = (seconds % 3600) / 60
+        return f"{hours:.0f}h {minutes:.0f}m"
+
 class RcloneManager:
     """Handles rclone operations and validations."""
 
@@ -342,10 +530,11 @@ class LocalBackupManager:
 class BackupManager:
     """Main backup management class."""
 
-    def __init__(self, config: AppConfig, local_destination: Optional[str] = None):
+    def __init__(self, config: AppConfig, local_destination: Optional[str] = None, dry_run: bool = False):
         self.config = config
         self.local_destination = local_destination
         self.is_local_mode = local_destination is not None
+        self.dry_run = dry_run
         
         if self.is_local_mode:
             self.local_manager = LocalBackupManager(config, local_destination)
@@ -569,3 +758,71 @@ class BackupManager:
 
         except Exception as e:
             self.logger.warning(f"Error during cleanup for backup '{backup_item.name}': {e}")
+    def create_backup_dry_run(self, backup_item: BackupItem) -> DryRunResult:
+        """Perform dry run analysis for a backup item."""
+        self.logger.info(f"Analyzing backup: {backup_item.name}")
+        
+        try:
+            # Create timestamped destination directory name
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+            
+            if self.is_local_mode:
+                destination = f"{self.local_destination}/{backup_item.name}_{timestamp}"
+                destination_type = "local"
+            else:
+                destination = f"{backup_item.rclone_path}_{timestamp}"
+                destination_type = "remote"
+            
+            # Analyze files that would be copied
+            files_to_copy, excluded_files, total_size = analyze_backup_files(
+                backup_item.source_dir,
+                backup_item.max_age,
+                backup_item.max_size_bytes
+            )
+            
+            total_files = len(files_to_copy)
+            
+            self.logger.info(
+                f"Analysis complete for '{backup_item.name}': "
+                f"{total_files} files, {format_size(total_size)}"
+            )
+            
+            return DryRunResult(
+                backup_name=backup_item.name,
+                source_dir=backup_item.source_dir,
+                destination=destination,
+                total_files=total_files,
+                total_size=total_size,
+                filtered_files=files_to_copy,
+                excluded_files=excluded_files,
+                success=True
+            )
+            
+        except Exception as e:
+            error_msg = f"Dry run analysis failed: {e}"
+            self.logger.error(f"Error analyzing backup '{backup_item.name}': {error_msg}")
+            
+            return DryRunResult(
+                backup_name=backup_item.name,
+                source_dir=backup_item.source_dir,
+                destination="",
+                success=False,
+                error_message=error_msg
+            )
+
+    def run_all_backups_dry_run(self, backup_list: List[BackupItem]) -> DryRunSummary:
+        """Run dry run analysis for all backup items."""
+        self.logger.info(f"Starting dry run analysis for {len(backup_list)} backups")
+        
+        summary = DryRunSummary()
+        
+        for backup_item in backup_list:
+            result = self.create_backup_dry_run(backup_item)
+            summary.add_result(result)
+        
+        self.logger.info(
+            f"Dry run analysis complete: {summary.successful_backups} successful, "
+            f"{summary.failed_backups} failed, {format_size(summary.total_size)} total"
+        )
+        
+        return summary

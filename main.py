@@ -10,7 +10,7 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from python_utils.email_utils import EmailNotifier, send_backup_notification
 from python_utils.logging_utils import setup_backup_logging
@@ -110,7 +110,7 @@ def send_email_notification(config: AppConfig, summary: str, has_errors: bool) -
         logging.error(f"Failed to send email notification: {e}")
 
 
-def parse_arguments() -> Optional[str]:
+def parse_arguments() -> Tuple[Optional[str], bool]:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Backup files using rclone or local filesystem",
@@ -119,6 +119,8 @@ def parse_arguments() -> Optional[str]:
 Examples:
   python main.py                           # Run with rclone (cron mode)
   python main.py /path/to/backup/dest      # Run with local filesystem backup
+  python main.py --dry-run                 # Analyze backup size without copying
+  python main.py --dry-run /path/dest      # Analyze local backup size
         """,
     )
     
@@ -128,8 +130,74 @@ Examples:
         help="Local filesystem destination path (enables local backup mode)",
     )
     
+    parser.add_argument(
+        "--dry-run", "-n",
+        action="store_true",
+        help="Calculate backup size and list files without copying"
+    )
+    
     args = parser.parse_args()
-    return args.destination
+    return args.destination, args.dry_run
+
+
+
+
+def run_dry_run_mode(backup_manager, config, logger) -> int:
+    """Execute dry run mode."""
+    from src.backup_manager import format_size, format_duration, estimate_transfer_time
+    
+    logger.info("Running in DRY RUN mode - no files will be copied")
+    
+    # Get all backup items (skip schedule filtering for dry run)
+    backup_list = config.backup_copy_list
+    
+    if not backup_list:
+        logger.warning("No backup items configured")
+        return 0
+    
+    # Run dry run analysis
+    summary = backup_manager.run_all_backups_dry_run(backup_list)
+    
+    # Simple output for now
+    if sys.stdout.isatty():
+        # Interactive mode - console output
+        print(f"\n=== DRY RUN SUMMARY ===")
+        print(f"Total backups: {summary.total_backups}")
+        print(f"Successful: {summary.successful_backups}")
+        print(f"Failed: {summary.failed_backups}")
+        print(f"Total files: {summary.total_files:,}")
+        print(f"Total size: {format_size(summary.total_size)}")
+        
+        if summary.total_size > 0:
+            dest_type = "local" if backup_manager.local_destination else "remote"
+            est_time = estimate_transfer_time(summary.total_size, dest_type)
+            print(f"Estimated time: {format_duration(est_time)}")
+        
+        print(f"\nBackup Details:")
+        for result in summary.results:
+            status = "✅" if result.success else "❌"
+            if result.success:
+                print(f"  {status} {result.backup_name}: {result.total_files} files, {format_size(result.total_size)}")
+            else:
+                print(f"  {status} {result.backup_name}: {result.error_message}")
+    else:
+        # Cron mode - log output
+        logger.info("=== DRY RUN SUMMARY ===")
+        logger.info(f"Total backups: {summary.total_backups}")
+        logger.info(f"Successful analyses: {summary.successful_backups}")
+        logger.info(f"Failed analyses: {summary.failed_backups}")
+        logger.info(f"Total files: {summary.total_files:,}")
+        logger.info(f"Total size: {format_size(summary.total_size)}")
+        
+        for result in summary.results:
+            if result.success:
+                logger.info(f"✅ {result.backup_name}: {result.total_files} files, {format_size(result.total_size)}")
+            else:
+                logger.error(f"❌ {result.backup_name}: {result.error_message}")
+    
+    return 0
+
+
 
 
 def main() -> int:
@@ -138,8 +206,8 @@ def main() -> int:
 
     try:
         # Parse command line arguments
-        local_destination = parse_arguments()
-        cli_mode = local_destination is not None
+        local_destination, dry_run = parse_arguments()
+        cli_mode = local_destination is not None or dry_run
         
         # Load configuration
         config = load_config("config.yaml")
@@ -174,7 +242,11 @@ def main() -> int:
             logger.info(f"Found {len(scheduled_backups)} backups scheduled to run today")
 
         # Initialize backup manager
-        backup_manager = BackupManager(config, local_destination=local_destination)
+        backup_manager = BackupManager(config, local_destination=local_destination, dry_run=dry_run)
+
+        # Handle dry run mode
+        if dry_run:
+            return run_dry_run_mode(backup_manager, config, logger)
 
         # Perform pre-flight checks
         logger.info("Performing pre-flight checks...")
@@ -263,3 +335,104 @@ def main() -> int:
 if __name__ == "__main__":
     exit_code = main()
     sys.exit(exit_code)
+
+def print_dry_run_summary(summary, detailed: bool = False) -> None:
+    """Print formatted dry run summary to console."""
+    from src.backup_manager import format_size, format_duration, estimate_transfer_time
+    
+    print("╭─── Backup Dry Run Summary " + "─" * 40 + "╮")
+    print("│" + " " * 64 + "│")
+    print("│ 📊 OVERVIEW" + " " * 51 + "│")
+    print(f"│   • Total backups: {summary.total_backups}" + " " * (49 - len(str(summary.total_backups))) + "│")
+    print(f"│   • Total files: {summary.total_files:,}" + " " * (51 - len(f"{summary.total_files:,}")) + "│")
+    print(f"│   • Total size: {format_size(summary.total_size)}" + " " * (52 - len(format_size(summary.total_size))) + "│")
+    
+    # Estimate transfer time
+    if summary.total_size > 0:
+        dest_type = "local" if any("/mnt" in r.destination or "/home" in r.destination for r in summary.results if r.success) else "remote"
+        est_time = estimate_transfer_time(summary.total_size, dest_type)
+        print(f"│   • Estimated time: {format_duration(est_time)}" + " " * (48 - len(format_duration(est_time))) + "│")
+    
+    print("│" + " " * 64 + "│")
+    print("│ 📁 BACKUP DETAILS" + " " * 47 + "│")
+    
+    for result in summary.results:
+        status = "✅" if result.success else "❌"
+        print(f"│   {result.backup_name} ({status})" + " " * (59 - len(result.backup_name)) + "│")
+        if result.success:
+            size_info = f"{result.total_files} files, {format_size(result.total_size)}"
+            dest_short = result.destination.split("/")[-1] if "/" in result.destination else result.destination
+            print(f"│     └─ {size_info} → {dest_short}" + " " * (59 - len(f"{size_info} → {dest_short}")) + "│")
+        else:
+            print(f"│     └─ Error: {result.error_message[:40]}..." + " " * (15) + "│")
+    
+    print("│" + " " * 64 + "│")
+    print("╰" + "─" * 64 + "╯")
+    
+    if detailed and summary.total_backups > 0:
+        print("\n📋 DETAILED FILE ANALYSIS")
+        for result in summary.results:
+            if result.success:
+                print_detailed_file_list(result)
+
+
+def print_detailed_file_list(result) -> None:
+    """Print detailed file listing for a backup."""
+    from src.backup_manager import format_size
+    
+    print(f"\n📁 {result.backup_name} → {result.destination}")
+    print(f"Files to copy ({result.total_files} total, {format_size(result.total_size)}):")
+    
+    if result.filtered_files:
+        print("┌" + "─" * 50 + "┬" + "─" * 10 + "┐")
+        print("│" + "File Path".ljust(50) + "│" + "Size".ljust(10) + "│")
+        print("├" + "─" * 50 + "┼" + "─" * 10 + "┤")
+        
+        # Show first 10 files
+        for i, file_path in enumerate(result.filtered_files[:10]):
+            if file_path.exists():
+                size = format_size(file_path.stat().st_size)
+                path_str = str(file_path)
+                if len(path_str) > 48:
+                    path_str = "..." + path_str[-45:]
+                print("│" + path_str.ljust(50) + "│" + size.ljust(10) + "│")
+        
+        if len(result.filtered_files) > 10:
+            remaining = len(result.filtered_files) - 10
+            print("│" + f"... and {remaining} more files".ljust(50) + "│" + " " * 10 + "│")
+        
+        print("└" + "─" * 50 + "┴" + "─" * 10 + "┘")
+    
+    if result.excluded_files:
+        print(f"\nExcluded files ({len(result.excluded_files)} total):")
+        for file_path in result.excluded_files[:5]:  # Show first 5 excluded files
+            print(f"• {file_path}")
+        if len(result.excluded_files) > 5:
+            print(f"• ... and {len(result.excluded_files) - 5} more excluded files")
+
+
+def log_dry_run_summary(summary, logger) -> None:
+    """Log dry run results in structured format for cron jobs."""
+    from src.backup_manager import format_size, format_duration, estimate_transfer_time
+    
+    logger.info("=== DRY RUN SUMMARY ===")
+    logger.info(f"Total backups: {summary.total_backups}")
+    logger.info(f"Successful analyses: {summary.successful_backups}")
+    logger.info(f"Failed analyses: {summary.failed_backups}")
+    logger.info(f"Total files: {summary.total_files:,}")
+    logger.info(f"Total size: {format_size(summary.total_size)}")
+    
+    if summary.total_size > 0:
+        dest_type = "local" if any("/mnt" in r.destination or "/home" in r.destination for r in summary.results if r.success) else "remote"
+        est_time = estimate_transfer_time(summary.total_size, dest_type)
+        logger.info(f"Estimated duration: {format_duration(est_time)}")
+    
+    logger.info("=== INDIVIDUAL BACKUP ANALYSIS ===")
+    for result in summary.results:
+        if result.success:
+            logger.info(f"✅ {result.backup_name}: {result.total_files} files, "
+                       f"{format_size(result.total_size)} → {result.destination}")
+        else:
+            logger.error(f"❌ {result.backup_name}: {result.error_message}")
+
+

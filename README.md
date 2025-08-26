@@ -107,6 +107,44 @@ schedule: "* * 10,20,30 * *" # 10th, 20th, and 30th of every month
 | `schedule` | | `"* * * * 1"` | Cron schedule (Monday weekly) |
 | `retention` | | `2` | Number of backup copies to keep |
 
+### Configuration Management with Symlinks
+
+For better configuration management and backup, the `config.yaml` file is implemented as a symlink to `~/etc/rclone-copy-config.yaml`:
+
+```bash
+# The actual configuration is stored in ~/etc for backup purposes
+ls -la config.yaml
+# lrwxrwxrwx ... config.yaml -> /home/user/etc/rclone-copy-config.yaml
+```
+
+**Benefits of this approach:**
+- **Centralized configuration**: All server configurations stored in `~/etc/`
+- **Backup safety**: Configuration preserved independently of project directory
+- **Easy maintenance**: Edit configuration from any location
+- **Git-friendly**: Symlink allows project to work while keeping sensitive config out of repo
+
+**Setup symlink configuration:**
+```bash
+# Create ~/etc directory
+mkdir -p ~/etc
+
+# Move existing config to ~/etc
+mv config.yaml ~/etc/rclone-copy-config.yaml
+
+# Create symlink back to project
+ln -s ~/etc/rclone-copy-config.yaml config.yaml
+```
+
+**Editing configuration:**
+```bash
+# Edit from project directory
+vim config.yaml
+
+# Or edit directly from ~/etc
+vim ~/etc/rclone-copy-config.yaml
+```
+
+
 ## Rclone Setup
 
 Since the server doesn't have a web browser, use one of these methods:
@@ -161,16 +199,44 @@ uv run python main.py /mnt/external_drive/backups
 uv run python main.py /mnt/nas/backup_storage
 ```
 
+
+**Dry Run Mode:**
+```bash
+# Analyze backup size without copying (remote storage)
+uv run python main.py --dry-run
+
+# Analyze backup size for local filesystem backup
+uv run python main.py --dry-run /path/to/backup/destination
+
+# Short form using -n flag
+uv run python main.py -n
+
+# Example output:
+# === DRY RUN SUMMARY ===
+# Total backups: 3
+# Successful: 3
+# Failed: 0
+# Total files: 1,247
+# Total size: 2.4 GB
+# Estimated time: 8m 32s
+# 
+# Backup Details:
+#   ✅ daily_documents: 342 files, 156.7 MB
+#   ✅ weekly_photos: 89 files, 1.2 GB
+#   ✅ monthly_code: 816 files, 1.1 GB
+```
+
 ### Key Differences Between Modes
 
-| Feature | Rclone Mode | Local Filesystem Mode |
-|---------|-------------|----------------------|
-| **Trigger** | `python main.py` | `python main.py /path` |
-| **Destination** | Remote storage (cloud) | Local directory |
-| **Logging** | File only | Console + File |
-| **Space Check** | 200GB remote check | Skipped |
-| **Directory Structure** | `remote:/backup_name_timestamp` | `path/backup_name_timestamp` |
-| **Use Case** | Scheduled/cron jobs | Interactive/manual use |
+| Feature | Rclone Mode | Local Filesystem Mode | Dry Run Mode |
+|---------|-------------|----------------------|--------------|
+| **Trigger** | `python main.py` | `python main.py /path` | `python main.py --dry-run [path]` |
+| **Destination** | Remote storage (cloud) | Local directory | Analysis only (no copying) |
+| **Logging** | File only | Console + File | Console + File |
+| **Space Check** | 200GB remote check | Skipped | Analysis only |
+| **Directory Structure** | `remote:/backup_name_timestamp` | `path/backup_name_timestamp` | Shows planned structure |
+| **Use Case** | Scheduled/cron jobs | Interactive/manual use | Planning and verification |
+| **Output** | Backup summary | Backup summary | File analysis and size estimates |
 
 ### Automated Execution (Cron)
 
