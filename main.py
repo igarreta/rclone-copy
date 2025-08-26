@@ -226,10 +226,16 @@ def main() -> int:
         if cli_mode:
             # Local mode: process all backup items (ignore schedule)
             scheduled_backups = config.backup_copy_list
-            logger.info(f"Local mode: processing all {len(scheduled_backups)} backup items (schedule ignored)")
+            logger.info(f"Local mode: processing all backup items (schedule and rclone_enabled ignored)")
         else:
             # Rclone mode: filter by schedule
             scheduled_backups = ScheduleChecker.get_scheduled_backups(config.backup_copy_list)
+            
+            # Log information about rclone-disabled backups
+            disabled_backups = [item for item in config.backup_copy_list if not item.rclone_enabled]
+            if disabled_backups:
+                disabled_names = [item.name for item in disabled_backups]
+                logger.info(f"Skipping {len(disabled_backups)} rclone-disabled backups: {disabled_names}")
             
             if not scheduled_backups:
                 logger.info("No backups scheduled to run today")

@@ -50,6 +50,10 @@ class BackupItem(BaseModel):
     retention: int = Field(
         default=2, ge=1, description="Number of backup copies to keep"
     )
+    rclone_enabled: bool = Field(
+        default=True,
+        description="Whether this backup should run in rclone mode (always runs in local mode)"
+    )
 
     @field_validator("max_size")
     @classmethod

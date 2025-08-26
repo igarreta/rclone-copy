@@ -106,6 +106,7 @@ schedule: "* * 10,20,30 * *" # 10th, 20th, and 30th of every month
 | `max_age` | | `0` | File age limit in days (0 = all files) |
 | `schedule` | | `"* * * * 1"` | Cron schedule (Monday weekly) |
 | `retention` | | `2` | Number of backup copies to keep |
+| `rclone_enabled` | | `true` | Whether backup runs in rclone mode |
 
 ### Configuration Management with Symlinks
 
@@ -225,6 +226,32 @@ uv run python main.py -n
 #   ✅ weekly_photos: 89 files, 1.2 GB
 #   ✅ monthly_code: 816 files, 1.1 GB
 ```
+### Local-Only Backups (rclone_enabled: false)
+
+For sensitive data or compliance requirements, you can configure backups to run only in local filesystem mode and never upload to remote storage:
+
+```yaml
+# Example: Sensitive data backup
+- name: sensitive_documents
+  source_dir: /home/user/private
+  rclone_path: onedrive:/backups/private  # Still required for path structure
+  schedule: "* * * * *"  # Would run daily if rclone was enabled
+  rclone_enabled: false  # Only runs in local mode, never in rclone mode
+  retention: 10
+```
+
+**Behavior by mode:**
+- **Rclone mode** (`python main.py`): Skipped entirely
+- **Local mode** (`python main.py /path`): Always runs
+- **Dry-run mode** (`--dry-run`): Included in analysis
+
+**Use cases:**
+- Sensitive data that should never leave local network
+- Compliance requirements for data residency
+- Large datasets to avoid bandwidth limits
+- Development files for local NAS backup only
+
+
 
 ### Key Differences Between Modes
 
@@ -237,6 +264,7 @@ uv run python main.py -n
 | **Directory Structure** | `remote:/backup_name_timestamp` | `path/backup_name_timestamp` | Shows planned structure |
 | **Use Case** | Scheduled/cron jobs | Interactive/manual use | Planning and verification |
 | **Output** | Backup summary | Backup summary | File analysis and size estimates |
+| **Schedule Filtering** | Respects schedule and rclone_enabled | Ignores schedule and rclone_enabled | Includes all backups |
 
 ### Automated Execution (Cron)
 

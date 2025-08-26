@@ -29,6 +29,7 @@ backup_copy_list:
     max_age: 7  # Only backup files modified in last 7 days
     schedule: "* * * * *"  # Every day
     retention: 7  # Keep 7 backup copies
+    rclone_enabled: true   # Runs in both rclone and local modes (default)
 
   # Example 2: Weekly backup on Mondays
   - name: weekly_photos
@@ -47,6 +48,16 @@ backup_copy_list:
     max_age: 0  # All files (no age limit)
     schedule: "* * 1 * *"  # 1st of every month
     retention: 12  # Keep 12 monthly backups
+
+  # Example 4: Local-only backup (sensitive data)
+  - name: sensitive_data
+    source_dir: /home/user/private
+    rclone_path: onedrive:/backups/private
+    max_size: 1GB
+    max_age: 0  # All files
+    schedule: "* * * * *"  # Would run daily if rclone was enabled
+    retention: 10  # Keep 10 local backups
+    rclone_enabled: false  # Only runs in local mode, never uploaded to cloud
 
   # Example 4: Multiple days per week
   - name: workdays_backup
@@ -72,6 +83,19 @@ backup_copy_list:
 # Since this script runs daily at 5:00 AM, only day-of-month and day-of-week are used.
 # Minutes and hours should always be "*" (placeholders).
 #
+# rclone_enabled Field:
+# 
+# Controls whether a backup runs in rclone mode (remote storage):
+# - true (default): Backup runs in both rclone and local modes
+# - false: Backup only runs in local filesystem mode, never in rclone mode
+# 
+# Use rclone_enabled: false for:
+# - Sensitive data that should never go to cloud storage
+# - Large datasets to avoid bandwidth limits
+# - Compliance requirements for data residency
+# - Development/temporary files for local NAS backup only
+#
+
 # Day-of-week: 1=Monday, 2=Tuesday, 3=Wednesday, 4=Thursday, 5=Friday, 6=Saturday, 7=Sunday
 #
 # Common examples:
@@ -92,3 +116,4 @@ backup_copy_list:
 # max_age: (optional, default: 0) Maximum file age in days (0 = all files)
 # schedule: (optional, default: "* * * * 1") Cron-like schedule
 # retention: (optional, default: 2) Number of backup copies to keep
+# rclone_enabled: (optional, default: true) Whether backup runs in rclone mode

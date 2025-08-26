@@ -49,7 +49,7 @@ class ScheduleChecker:
     @staticmethod
     def get_scheduled_backups(backup_list: List[BackupItem], current_time: datetime = None) -> List[BackupItem]:
         """
-        Filter backup list to only include items scheduled to run.
+        Filter backup list to only include rclone-enabled items scheduled to run.
 
         Args:
             backup_list: List of all backup items
@@ -61,6 +61,9 @@ class ScheduleChecker:
         scheduled_backups = []
 
         for backup_item in backup_list:
+            # Skip backups that are disabled for rclone mode
+            if not backup_item.rclone_enabled:
+                continue
             try:
                 if ScheduleChecker.should_run_backup(backup_item, current_time):
                     scheduled_backups.append(backup_item)
