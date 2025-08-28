@@ -98,10 +98,10 @@ def send_email_notification(config: AppConfig, summary: str, has_errors: bool) -
 
         # Use python_utils email notification
         send_backup_notification(
-            to_emails=config.email,
-            subject=subject,
-            backup_summary=summary,
-            has_errors=has_errors,
+            backup_results=[],  # TODO: Pass actual backup results
+            errors=[] if not has_errors else ["Backup errors occurred"],
+            duration=0.0,  # TODO: Pass actual duration
+            config_to_emails=config.email,
         )
 
         logging.info(f"Email notification sent to: {', '.join(config.email)}")

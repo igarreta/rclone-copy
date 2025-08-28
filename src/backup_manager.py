@@ -309,9 +309,7 @@ class RcloneManager:
 
             # Add age filter if specified
             if max_age_days > 0:
-                cutoff_date = datetime.now() - timedelta(days=max_age_days)
-                min_age_filter = cutoff_date.strftime("%Y-%m-%d")
-                cmd.extend(["--min-age", f"-{max_age_days}d"])
+                cmd.extend(["--max-age", f"{max_age_days}d"])
 
             self.logger.info(f"Running rclone command: {' '.join(cmd)}")
 
@@ -460,7 +458,7 @@ class LocalBackupManager:
 
             # Get files to backup based on age criteria
             if max_age_days > 0:
-                files_to_backup = get_files_modified_within_days(source_dir, max_age_days)
+                files_to_backup = [file_path for file_path, _, _ in get_files_modified_within_days(source_dir, max_age_days)]
             else:
                 # Get all files recursively
                 files_to_backup = [

@@ -116,4 +116,4 @@ backup_copy_list:
 # max_age: (optional, default: 0) Maximum file age in days (0 = all files)
 # schedule: (optional, default: "* * * * 1") Cron-like schedule
 # retention: (optional, default: 2) Number of backup copies to keep
-# rclone_enabled: (optional, default: true) Whether backup runs in rclone mode
+# rclone_enabled: (optional, default: true) Enable cloud backups via rclone (false = local mode only)

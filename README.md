@@ -106,7 +106,7 @@ schedule: "* * 10,20,30 * *" # 10th, 20th, and 30th of every month
 | `max_age` | | `0` | File age limit in days (0 = all files) |
 | `schedule` | | `"* * * * 1"` | Cron schedule (Monday weekly) |
 | `retention` | | `2` | Number of backup copies to keep |
-| `rclone_enabled` | | `true` | Whether backup runs in rclone mode |
+| `rclone_enabled` | | `true` | Enable cloud backups via rclone (false = local mode only) |
 
 ### Configuration Management with Symlinks
 
