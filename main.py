@@ -214,9 +214,11 @@ def main() -> int:
 
         # Setup logging
         logger = setup_logging(config, cli_mode=cli_mode)
-        if cli_mode:
+        if local_destination:
             logger.info(f"Starting backup process in LOCAL FILESYSTEM mode")
             logger.info(f"Destination: {local_destination}")
+        elif dry_run:
+            logger.info("Starting backup process in DRY RUN mode")
         else:
             logger.info("Starting rclone-copy backup process")
             

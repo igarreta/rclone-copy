@@ -305,6 +305,7 @@ class RcloneManager:
                 "--stats-one-line",
                 "--stats=1s",
                 "--create-empty-src-dirs",
+                "--exclude", ".recycle/**",
             ]
 
             # Add age filter if specified
@@ -470,7 +471,8 @@ class LocalBackupManager:
                 return True, 0, ""
 
             # Calculate total bytes to transfer
-            total_bytes = calculate_total_size(files_to_backup)
+            # Calculate total bytes to transfer from file paths
+            total_bytes = sum(Path(f).stat().st_size for f in files_to_backup)
             
             # Create destination directory
             dest_path.mkdir(parents=True, exist_ok=True)
@@ -597,11 +599,11 @@ class BackupManager:
                         backup_item.source_dir, backup_item.max_age
                     )
                     total_size = calculate_total_size(files_to_backup)
-
                     if total_size > backup_item.max_size_bytes:
-                        errors.append(
+                        # Log warning but do not add to errors - will be skipped during execution
+                        self.logger.warning(
                             f"Backup '{backup_item.name}' size exceeds limit: "
-                            f"{total_size} bytes (limit: {backup_item.max_size_bytes} bytes)"
+                            f"{total_size} bytes (limit: {backup_item.max_size_bytes} bytes) - will be SKIPPED"
                         )
             except Exception as e:
                 errors.append(
@@ -614,6 +616,32 @@ class BackupManager:
         """Create a single backup."""
         start_time = datetime.now()
         self.logger.info(f"Starting backup: {backup_item.name}")
+
+        # Check if backup size exceeds limit and skip if so
+        try:
+            if is_directory_accessible(backup_item.source_dir):
+                files_to_backup = get_files_modified_within_days(
+                    backup_item.source_dir, backup_item.max_age
+                )
+                total_size = calculate_total_size(files_to_backup)
+
+                if total_size > backup_item.max_size_bytes:
+                    self.logger.warning(
+                        f"Skipping backup '{backup_item.name}' - size exceeds limit: "
+                        f"{total_size} bytes (limit: {backup_item.max_size_bytes} bytes)"
+                    )
+                    execution_time = (datetime.now() - start_time).total_seconds()
+                    return BackupResult(
+                        backup_name=backup_item.name,
+                        success=True,  # Consider as success since we intentionally skipped
+                        bytes_transferred=0,
+                        error_message="Skipped due to size limit",
+                        execution_time=execution_time,
+                        latest_file_date=None,
+                    )
+        except Exception as e:
+            self.logger.warning(f"Could not check size for {backup_item.name}: {e}")
+
 
         try:
             # Create timestamped destination directory
@@ -645,9 +673,10 @@ class BackupManager:
                         backup_item.source_dir, backup_item.max_age
                     )
                     if files_to_backup:
-                        # Get the most recent modification time
+                        # Extract file paths from tuples (path, size, mtime) and get latest modification time
+                        file_paths = [file_info[0] for file_info in files_to_backup]  # Get path from tuple
                         latest_file_date = max(
-                            Path(f).stat().st_mtime for f in files_to_backup
+                            Path(f).stat().st_mtime for f in file_paths
                         )
                         latest_file_date = datetime.fromtimestamp(latest_file_date)
                 except Exception as e:
