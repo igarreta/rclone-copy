@@ -459,7 +459,7 @@ class LocalBackupManager:
 
             # Get files to backup based on age criteria
             if max_age_days > 0:
-                files_to_backup = [file_path for file_path, _, _ in get_files_modified_within_days(source_dir, max_age_days)]
+                files_to_backup = [file_path for file_path, _, _ in get_files_modified_within_days(source_dir, max_age_days, include_subdirs=True)]
             else:
                 # Get all files recursively
                 files_to_backup = [
@@ -596,7 +596,7 @@ class BackupManager:
                 if is_directory_accessible(backup_item.source_dir):
                     # Get files within age criteria
                     files_to_backup = get_files_modified_within_days(
-                        backup_item.source_dir, backup_item.max_age
+                        backup_item.source_dir, backup_item.max_age, include_subdirs=True
                     )
                     total_size = calculate_total_size(files_to_backup)
                     if total_size > backup_item.max_size_bytes:
@@ -621,7 +621,7 @@ class BackupManager:
         try:
             if is_directory_accessible(backup_item.source_dir):
                 files_to_backup = get_files_modified_within_days(
-                    backup_item.source_dir, backup_item.max_age
+                    backup_item.source_dir, backup_item.max_age, include_subdirs=True
                 )
                 total_size = calculate_total_size(files_to_backup)
 
@@ -670,7 +670,7 @@ class BackupManager:
             if success and is_directory_accessible(backup_item.source_dir):
                 try:
                     files_to_backup = get_files_modified_within_days(
-                        backup_item.source_dir, backup_item.max_age
+                        backup_item.source_dir, backup_item.max_age, include_subdirs=True
                     )
                     if files_to_backup:
                         # Extract file paths from tuples (path, size, mtime) and get latest modification time
