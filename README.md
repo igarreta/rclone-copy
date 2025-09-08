@@ -9,6 +9,7 @@ Secondary backup copy system using rclone with cron-based scheduling. This Pytho
 - **Multiple backup sources**: Configure multiple directories with individual settings
 - **Remote storage support**: Works with any rclone-supported remote (OneDrive, Google Drive, S3, etc.)
 - **Local filesystem backups**: Direct backup to local directories when run with path argument
+- **Uptime Kuma monitoring**: Automatic health monitoring with push notifications
 - **Size and age filtering**: Control backup size and file age limits
 - **Retention management**: Automatic cleanup of old backups
 - **Pre-flight checks**: Validates sources, destinations, and available space before starting
@@ -19,8 +20,9 @@ Secondary backup copy system using rclone with cron-based scheduling. This Pytho
 ## Requirements
 
 - Python 3.13+
-- rclone (must be configured with remote storage)
+- rclone (must be configured with remote storage)  
 - uv (for dependency management)
+- Uptime Kuma (optional, for health monitoring)
 
 ## Installation
 
@@ -48,6 +50,8 @@ Secondary backup copy system using rclone with cron-based scheduling. This Pytho
    cp config.yaml config.yaml.backup  # Keep the example
    # Edit config.yaml with your backup settings
    ```
+
+5. **Optional: Set up Uptime Kuma monitoring** (see [Uptime Kuma Integration](#uptime-kuma-integration) section below)
 
 ## Configuration
 
@@ -146,6 +150,65 @@ vim ~/etc/rclone-copy-config.yaml
 ```
 
 
+
+## Uptime Kuma Integration
+
+The application includes built-in integration with [Uptime Kuma](https://github.com/louislam/uptime-kuma) for automated health monitoring and push notifications.
+
+### Features
+
+- **Smart monitoring**: Only monitors rclone mode backups (cloud storage operations)
+- **Push notifications**: HTTP GET requests to Uptime Kuma push monitor endpoint  
+- **Status mapping**: Success/failure status based on backup results
+- **Retry logic**: Automatic retry with 2-minute delay on notification failures
+- **Error isolation**: Notification failures don't affect backup operation
+
+### Setup Uptime Kuma Monitoring
+
+1. **Create Push Monitor in Uptime Kuma**:
+   - Open Uptime Kuma web interface
+   - Create new monitor of type "Push"
+   - Copy the push URL (format: `http://localhost:3001/api/push/MONITOR_ID`)
+
+2. **Update Script Configuration**:
+   The current implementation uses push URL: `http://localhost:3001/api/push/MhyfEdOgdA`
+   
+   To change the monitor ID, edit the `send_uptime_kuma_notification()` function in `main.py`:
+   ```python
+   base_url = "http://localhost:3001/api/push/YOUR_MONITOR_ID"
+   ```
+
+### Notification Behavior
+
+**When notifications are sent:**
+- ✅ **Rclone mode** (`python main.py`): Always sends notifications
+- ❌ **Local filesystem mode** (`python main.py /path`): Never sends notifications  
+- ❌ **Dry-run mode** (`python main.py --dry-run`): Never sends notifications
+
+**Status mapping:**
+- **Success** (`return 0`): `status=up&msg=OK`
+- **Configuration errors** (`return 1`): `status=down&msg=FAILED`
+- **Backup failures** (`return 2`): `status=down&msg=FAILED`
+
+### Troubleshooting Uptime Kuma
+
+**Test connectivity:**
+```bash
+# Test manual notification
+curl "http://localhost:3001/api/push/MhyfEdOgdA?status=up&msg=TEST&ping="
+```
+
+**Check logs for notification errors:**
+```bash
+# Look for Uptime Kuma related messages
+grep -i "uptime kuma" log/rclone_copy.log
+
+# Common log messages:
+# "Uptime Kuma notification sent successfully"
+# "Uptime Kuma notification failed, retrying in 2 minutes..."
+# "Uptime Kuma notification failed on retry, giving up"
+```
+
 ## Rclone Setup
 
 Since the server doesn't have a web browser, use one of these methods:
@@ -182,6 +245,7 @@ rclone lsd onedrive:/      # List root directories
 **Rclone Mode (Remote Storage):**
 ```bash
 # Run with rclone remote storage (respects schedules)
+# Sends Uptime Kuma notifications
 uv run python main.py
 
 # Check configuration without running backups
@@ -191,6 +255,7 @@ uv run python -c "from src.config import load_config; print('Config valid!')"
 **Local Filesystem Mode:**
 ```bash
 # Run with local filesystem backup to specified path
+# Does NOT send Uptime Kuma notifications
 uv run python main.py /path/to/backup/destination
 
 # Example: backup to external drive
@@ -203,7 +268,8 @@ uv run python main.py /mnt/nas/backup_storage
 
 **Dry Run Mode:**
 ```bash
-# Analyze backup size without copying (remote storage)
+# Analyze backup size without copying (remote storage)  
+# Does NOT send Uptime Kuma notifications
 uv run python main.py --dry-run
 
 # Analyze backup size for local filesystem backup
@@ -360,6 +426,18 @@ ls -la /path/to/source/directory
 uv run python -c "from python_utils.email_utils import EmailNotifier; print('Email config OK')"
 ```
 
+**Uptime Kuma integration:**
+```bash
+# Test manual notification
+curl "http://localhost:3001/api/push/MhyfEdOgdA?status=up&msg=TEST&ping="
+
+# Check notification logs
+grep -i "uptime kuma" log/rclone_copy.log
+
+# Verify Uptime Kuma is running
+curl http://localhost:3001/api/push/MhyfEdOgdA?ping=
+```
+
 **Local filesystem mode issues:**
 ```bash
 # Test local backup manually
@@ -385,6 +463,7 @@ uv run python main.py /path/to/destination
 2. **Size limits**: Use appropriate `max_size` limits to prevent huge transfers
 3. **Age filtering**: Use `max_age` to backup only recent files when appropriate
 4. **Retention**: Balance retention with storage costs
+5. **Monitoring**: Use Uptime Kuma integration for proactive failure detection
 
 ## Development
 
