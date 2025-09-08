@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import List, Optional
 
 import yaml
 from croniter import croniter
@@ -52,7 +51,7 @@ class BackupItem(BaseModel):
     )
     rclone_enabled: bool = Field(
         default=True,
-        description="Whether this backup should run in rclone mode (always runs in local mode)"
+        description="Whether this backup should run in rclone mode (always runs in local mode)",
     )
 
     @field_validator("max_size")
@@ -115,18 +114,19 @@ class BackupItem(BaseModel):
 class AppConfig(BaseModel):
     """Main application configuration."""
 
-    email: List[str] = Field(
+    email: list[str] = Field(
         default_factory=list, description="List of emails to send notifications to"
     )
     log_level: str = Field(
-        default="INFO", description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"
+        default="INFO",
+        description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
     )
     log_file: str = Field(
         default="log/rclone_copy.log",
         description="Path to log file relative to project root",
     )
     checks: ChecksConfig = Field(default_factory=ChecksConfig)
-    backup_copy_list: List[BackupItem] = Field(
+    backup_copy_list: list[BackupItem] = Field(
         description="List of directories to copy to remote storage"
     )
 
@@ -142,7 +142,7 @@ class AppConfig(BaseModel):
 
     @field_validator("email")
     @classmethod
-    def validate_email_list(cls, v: List[str]) -> List[str]:
+    def validate_email_list(cls, v: list[str]) -> list[str]:
         """Validate email addresses."""
         email_pattern = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
         for email in v:
@@ -172,7 +172,7 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
 
     try:
-        with open(config_file, "r", encoding="utf-8") as f:
+        with open(config_file, encoding="utf-8") as f:
             config_data = yaml.safe_load(f)
 
         if config_data is None:

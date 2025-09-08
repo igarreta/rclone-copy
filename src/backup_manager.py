@@ -6,7 +6,6 @@ import shutil
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 from python_utils.filesystem_utils import (
     calculate_total_size,
@@ -27,7 +26,7 @@ class BackupResult:
         bytes_transferred: int = 0,
         error_message: str = "",
         execution_time: float = 0.0,
-        latest_file_date: Optional[datetime] = None,
+        latest_file_date: datetime | None = None,
     ):
         self.backup_name = backup_name
         self.success = success
@@ -35,7 +34,6 @@ class BackupResult:
         self.error_message = error_message
         self.execution_time = execution_time
         self.latest_file_date = latest_file_date
-
 
 
 class DryRunResult:
@@ -48,8 +46,8 @@ class DryRunResult:
         destination: str,
         total_files: int = 0,
         total_size: int = 0,
-        filtered_files: Optional[List[Path]] = None,
-        excluded_files: Optional[List[Path]] = None,
+        filtered_files: list[Path] | None = None,
+        excluded_files: list[Path] | None = None,
         error_message: str = "",
         success: bool = True,
     ):
@@ -69,7 +67,7 @@ class DryRunSummary:
 
     def __init__(
         self,
-        results: Optional[List[DryRunResult]] = None,
+        results: list[DryRunResult] | None = None,
     ):
         self.results = results or []
 
@@ -104,18 +102,16 @@ class DryRunSummary:
 
 
 def analyze_backup_files(
-    source_dir: str, 
-    max_age_days: int = 0,
-    max_size_bytes: int = 0
-) -> Tuple[List[Path], List[Path], int]:
+    source_dir: str, max_age_days: int = 0, max_size_bytes: int = 0
+) -> tuple[list[Path], list[Path], int]:
     """
     Analyze files that would be included in backup.
-    
+
     Args:
         source_dir: Source directory path
         max_age_days: Maximum age of files in days (0 = no limit)
         max_size_bytes: Maximum total backup size (0 = no limit)
-    
+
     Returns:
         - files_to_copy: List of files that pass filters
         - excluded_files: List of files excluded by filters
@@ -124,76 +120,81 @@ def analyze_backup_files(
     source_path = Path(source_dir)
     if not source_path.exists() or not source_path.is_dir():
         return [], [], 0
-        
+
     files_to_copy = []
     excluded_files = []
     total_size = 0
     current_backup_size = 0
-    
+
     # Get cutoff date for max_age filter
     cutoff_date = None
     if max_age_days > 0:
         cutoff_date = datetime.now() - timedelta(days=max_age_days)
-    
+
     try:
         # Walk through all files in source directory
-        for file_path in source_path.rglob('*'):
+        for file_path in source_path.rglob("*"):
             if file_path.is_file():
                 try:
                     file_stat = file_path.stat()
                     file_size = file_stat.st_size
                     file_mtime = datetime.fromtimestamp(file_stat.st_mtime)
-                    
+
                     # Check age filter
                     if cutoff_date and file_mtime < cutoff_date:
                         excluded_files.append(file_path)
                         continue
-                    
+
                     # Check size limit
-                    if max_size_bytes > 0 and (current_backup_size + file_size) > max_size_bytes:
+                    if (
+                        max_size_bytes > 0
+                        and (current_backup_size + file_size) > max_size_bytes
+                    ):
                         excluded_files.append(file_path)
                         continue
-                    
+
                     # File passes all filters
                     files_to_copy.append(file_path)
                     total_size += file_size
                     current_backup_size += file_size
-                    
+
                 except (OSError, PermissionError):
                     # Skip files we can't access
                     excluded_files.append(file_path)
                     continue
-                    
+
     except (OSError, PermissionError) as e:
         # Handle directory access errors
-        logging.getLogger(__name__).warning(f"Cannot access directory {source_dir}: {e}")
+        logging.getLogger(__name__).warning(
+            f"Cannot access directory {source_dir}: {e}"
+        )
         return [], [], 0
-    
+
     return files_to_copy, excluded_files, total_size
 
 
 def estimate_transfer_time(total_size: int, destination_type: str = "remote") -> float:
     """
     Estimate transfer time based on size and destination type.
-    
+
     Args:
         total_size: Total size in bytes
         destination_type: "remote" or "local"
-        
+
     Returns:
         Estimated time in seconds
     """
     if total_size == 0:
         return 0.0
-    
+
     # Transfer rate estimates (bytes per second)
     if destination_type == "local":
         # Local disk transfer (SSD/HDD average)
         rate_bps = 50 * 1024 * 1024  # 50 MB/s
     else:
         # Remote transfer (internet upload)
-        rate_bps = 5 * 1024 * 1024   # 5 MB/s (conservative estimate)
-    
+        rate_bps = 5 * 1024 * 1024  # 5 MB/s (conservative estimate)
+
     return total_size / rate_bps
 
 
@@ -201,15 +202,15 @@ def format_size(size_bytes: int) -> str:
     """Format byte size in human-readable format."""
     if size_bytes == 0:
         return "0 B"
-    
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
         if size_bytes < 1024.0:
-            if unit == 'B':
+            if unit == "B":
                 return f"{size_bytes} {unit}"
             else:
                 return f"{size_bytes:.1f} {unit}"
         size_bytes /= 1024.0
-    
+
     return f"{size_bytes:.1f} PB"
 
 
@@ -224,6 +225,7 @@ def format_duration(seconds: float) -> str:
         hours = seconds / 3600
         minutes = (seconds % 3600) / 60
         return f"{hours:.0f}h {minutes:.0f}m"
+
 
 class RcloneManager:
     """Handles rclone operations and validations."""
@@ -242,10 +244,14 @@ class RcloneManager:
                 timeout=30,
             )
             return result.returncode == 0
-        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+        except (
+            subprocess.TimeoutExpired,
+            FileNotFoundError,
+            subprocess.SubprocessError,
+        ):
             return False
 
-    def get_remote_info(self, remote_name: str) -> Optional[Dict]:
+    def get_remote_info(self, remote_name: str) -> dict | None:
         """Get information about a remote using 'rclone about'."""
         try:
             result = subprocess.run(
@@ -263,7 +269,11 @@ class RcloneManager:
                 )
                 return None
 
-        except (subprocess.TimeoutExpired, json.JSONDecodeError, subprocess.SubprocessError) as e:
+        except (
+            subprocess.TimeoutExpired,
+            json.JSONDecodeError,
+            subprocess.SubprocessError,
+        ) as e:
             self.logger.error(f"Error getting remote info for '{remote_name}': {e}")
             return None
 
@@ -287,7 +297,7 @@ class RcloneManager:
 
     def copy_to_remote(
         self, source_dir: str, destination: str, max_age_days: int = 0
-    ) -> Tuple[bool, int, str]:
+    ) -> tuple[bool, int, str]:
         """
         Copy files from source to remote destination using rclone.
 
@@ -305,7 +315,8 @@ class RcloneManager:
                 "--stats-one-line",
                 "--stats=1s",
                 "--create-empty-src-dirs",
-                "--exclude", ".recycle/**",
+                "--exclude",
+                ".recycle/**",
             ]
 
             # Add age filter if specified
@@ -364,7 +375,7 @@ class RcloneManager:
                     continue
         return bytes_transferred
 
-    def list_remote_directories(self, remote_path: str) -> List[str]:
+    def list_remote_directories(self, remote_path: str) -> list[str]:
         """List directories in a remote path."""
         try:
             result = subprocess.run(
@@ -404,7 +415,9 @@ class RcloneManager:
             )
 
             if result.returncode == 0:
-                self.logger.info(f"Successfully deleted remote directory: {remote_path}")
+                self.logger.info(
+                    f"Successfully deleted remote directory: {remote_path}"
+                )
                 return True
             else:
                 self.logger.error(
@@ -430,12 +443,12 @@ class LocalBackupManager:
         try:
             # Ensure destination exists
             self.destination_path.mkdir(parents=True, exist_ok=True)
-            
+
             # Test write permissions
             test_file = self.destination_path / ".write_test"
             test_file.write_text("test")
             test_file.unlink()
-            
+
             return True
         except (OSError, PermissionError) as e:
             self.logger.error(f"Destination path not writable: {e}")
@@ -443,7 +456,7 @@ class LocalBackupManager:
 
     def copy_to_local(
         self, source_dir: str, destination: str, max_age_days: int = 0
-    ) -> Tuple[bool, int, str]:
+    ) -> tuple[bool, int, str]:
         """
         Copy files from source to local destination.
 
@@ -453,13 +466,18 @@ class LocalBackupManager:
         try:
             source_path = Path(source_dir)
             dest_path = Path(destination)
-            
+
             if not source_path.exists():
                 return False, 0, f"Source directory does not exist: {source_dir}"
 
             # Get files to backup based on age criteria
             if max_age_days > 0:
-                files_to_backup = [file_path for file_path, _, _ in get_files_modified_within_days(source_dir, max_age_days, include_subdirs=True)]
+                files_to_backup = [
+                    file_path
+                    for file_path, _, _ in get_files_modified_within_days(
+                        source_dir, max_age_days, include_subdirs=True
+                    )
+                ]
             else:
                 # Get all files recursively
                 files_to_backup = [
@@ -473,27 +491,29 @@ class LocalBackupManager:
             # Calculate total bytes to transfer
             # Calculate total bytes to transfer from file paths
             total_bytes = sum(Path(f).stat().st_size for f in files_to_backup)
-            
+
             # Create destination directory
             dest_path.mkdir(parents=True, exist_ok=True)
-            
+
             # Copy files while preserving structure
             bytes_transferred = 0
             for file_path in files_to_backup:
                 src_file = Path(file_path)
-                
+
                 # Calculate relative path from source
                 rel_path = src_file.relative_to(source_path)
                 dest_file = dest_path / rel_path
-                
+
                 # Create parent directories
                 dest_file.parent.mkdir(parents=True, exist_ok=True)
-                
+
                 # Copy file
                 shutil.copy2(src_file, dest_file)
                 bytes_transferred += src_file.stat().st_size
-                
-            self.logger.info(f"Copied {len(files_to_backup)} files ({bytes_transferred} bytes)")
+
+            self.logger.info(
+                f"Copied {len(files_to_backup)} files ({bytes_transferred} bytes)"
+            )
             return True, bytes_transferred, ""
 
         except Exception as e:
@@ -501,13 +521,13 @@ class LocalBackupManager:
             self.logger.error(error_msg)
             return False, 0, error_msg
 
-    def list_local_directories(self, path: str) -> List[str]:
+    def list_local_directories(self, path: str) -> list[str]:
         """List directories in a local path."""
         try:
             local_path = Path(path)
             if not local_path.exists():
                 return []
-            
+
             return [d.name for d in local_path.iterdir() if d.is_dir()]
         except Exception as e:
             self.logger.error(f"Error listing local directories '{path}': {e}")
@@ -530,22 +550,27 @@ class LocalBackupManager:
 class BackupManager:
     """Main backup management class."""
 
-    def __init__(self, config: AppConfig, local_destination: Optional[str] = None, dry_run: bool = False):
+    def __init__(
+        self,
+        config: AppConfig,
+        local_destination: str | None = None,
+        dry_run: bool = False,
+    ):
         self.config = config
         self.local_destination = local_destination
         self.is_local_mode = local_destination is not None
         self.dry_run = dry_run
-        
+
         if self.is_local_mode:
             self.local_manager = LocalBackupManager(config, local_destination)
             self.rclone = None
         else:
             self.rclone = RcloneManager(config)
             self.local_manager = None
-            
+
         self.logger = logging.getLogger(__name__)
 
-    def perform_preflight_checks(self, backup_list: List[BackupItem]) -> List[str]:
+    def perform_preflight_checks(self, backup_list: list[BackupItem]) -> list[str]:
         """
         Perform pre-flight checks before starting backups.
 
@@ -557,7 +582,9 @@ class BackupManager:
         if self.is_local_mode:
             # Local mode checks
             if not self.local_manager.validate_destination():
-                errors.append(f"Local destination not accessible or writable: {self.local_destination}")
+                errors.append(
+                    f"Local destination not accessible or writable: {self.local_destination}"
+                )
         else:
             # Rclone mode checks
             if not self.rclone.validate_rclone_installation():
@@ -596,7 +623,9 @@ class BackupManager:
                 if is_directory_accessible(backup_item.source_dir):
                     # Get files within age criteria
                     files_to_backup = get_files_modified_within_days(
-                        backup_item.source_dir, backup_item.max_age, include_subdirs=True
+                        backup_item.source_dir,
+                        backup_item.max_age,
+                        include_subdirs=True,
                     )
                     total_size = calculate_total_size(files_to_backup)
                     if total_size > backup_item.max_size_bytes:
@@ -642,24 +671,27 @@ class BackupManager:
         except Exception as e:
             self.logger.warning(f"Could not check size for {backup_item.name}: {e}")
 
-
         try:
             # Create timestamped destination directory
             timestamp = start_time.strftime("%Y-%m-%d_%H-%M")
-            
+
             if self.is_local_mode:
                 # Local filesystem backup
-                dest_path = Path(self.local_destination) / f"{backup_item.name}_{timestamp}"
+                dest_path = (
+                    Path(self.local_destination) / f"{backup_item.name}_{timestamp}"
+                )
                 destination = str(dest_path)
-                
+
                 # Perform the backup
-                success, bytes_transferred, error_message = self.local_manager.copy_to_local(
-                    backup_item.source_dir, destination, backup_item.max_age
+                success, bytes_transferred, error_message = (
+                    self.local_manager.copy_to_local(
+                        backup_item.source_dir, destination, backup_item.max_age
+                    )
                 )
             else:
                 # Rclone backup
                 destination = f"{backup_item.rclone_path}_{timestamp}"
-                
+
                 # Perform the backup
                 success, bytes_transferred, error_message = self.rclone.copy_to_remote(
                     backup_item.source_dir, destination, backup_item.max_age
@@ -670,11 +702,15 @@ class BackupManager:
             if success and is_directory_accessible(backup_item.source_dir):
                 try:
                     files_to_backup = get_files_modified_within_days(
-                        backup_item.source_dir, backup_item.max_age, include_subdirs=True
+                        backup_item.source_dir,
+                        backup_item.max_age,
+                        include_subdirs=True,
                     )
                     if files_to_backup:
                         # Extract file paths from tuples (path, size, mtime) and get latest modification time
-                        file_paths = [file_info[0] for file_info in files_to_backup]  # Get path from tuple
+                        file_paths = [
+                            file_info[0] for file_info in files_to_backup
+                        ]  # Get path from tuple
                         latest_file_date = max(
                             Path(f).stat().st_mtime for f in file_paths
                         )
@@ -703,7 +739,9 @@ class BackupManager:
                 # Perform cleanup
                 self._cleanup_old_backups(backup_item)
             else:
-                self.logger.error(f"Backup '{backup_item.name}' failed: {error_message}")
+                self.logger.error(
+                    f"Backup '{backup_item.name}' failed: {error_message}"
+                )
 
             return result
 
@@ -726,15 +764,20 @@ class BackupManager:
                 # Local filesystem cleanup
                 parent_path = Path(self.local_destination)
                 backup_name = backup_item.name
-                
-                existing_dirs = self.local_manager.list_local_directories(str(parent_path))
-                
+
+                existing_dirs = self.local_manager.list_local_directories(
+                    str(parent_path)
+                )
+
                 # Filter directories that match this backup
                 backup_dirs = []
                 for dir_name in existing_dirs:
-                    if dir_name.startswith(f"{backup_name}_") and len(dir_name) > len(backup_name) + 1:
+                    if (
+                        dir_name.startswith(f"{backup_name}_")
+                        and len(dir_name) > len(backup_name) + 1
+                    ):
                         # Validate timestamp format
-                        timestamp_part = dir_name[len(backup_name) + 1:]
+                        timestamp_part = dir_name[len(backup_name) + 1 :]
                         try:
                             datetime.strptime(timestamp_part, "%Y-%m-%d_%H-%M")
                             backup_dirs.append((dir_name, timestamp_part))
@@ -746,15 +789,17 @@ class BackupManager:
 
                 # Delete old backups beyond retention limit
                 if len(backup_dirs) > backup_item.retention:
-                    dirs_to_delete = backup_dirs[backup_item.retention:]
+                    dirs_to_delete = backup_dirs[backup_item.retention :]
                     for dir_name, _ in dirs_to_delete:
                         full_path = str(parent_path / dir_name)
                         self.logger.info(f"Deleting old backup: {full_path}")
                         self.local_manager.delete_local_directory(full_path)
-                        
+
             else:
                 # Rclone cleanup (original logic)
-                base_path = backup_item.rclone_path.rsplit("_", 1)[0]  # Remove any existing timestamp
+                base_path = backup_item.rclone_path.rsplit("_", 1)[
+                    0
+                ]  # Remove any existing timestamp
                 parent_path = "/".join(base_path.split("/")[:-1])
                 backup_name = base_path.split("/")[-1]
 
@@ -763,9 +808,12 @@ class BackupManager:
                 # Filter directories that match this backup
                 backup_dirs = []
                 for dir_name in existing_dirs:
-                    if dir_name.startswith(f"{backup_name}_") and len(dir_name) > len(backup_name) + 1:
+                    if (
+                        dir_name.startswith(f"{backup_name}_")
+                        and len(dir_name) > len(backup_name) + 1
+                    ):
                         # Validate timestamp format
-                        timestamp_part = dir_name[len(backup_name) + 1:]
+                        timestamp_part = dir_name[len(backup_name) + 1 :]
                         try:
                             datetime.strptime(timestamp_part, "%Y-%m-%d_%H-%M")
                             backup_dirs.append((dir_name, timestamp_part))
@@ -777,43 +825,44 @@ class BackupManager:
 
                 # Delete old backups beyond retention limit
                 if len(backup_dirs) > backup_item.retention:
-                    dirs_to_delete = backup_dirs[backup_item.retention:]
+                    dirs_to_delete = backup_dirs[backup_item.retention :]
                     for dir_name, _ in dirs_to_delete:
                         full_path = f"{parent_path}/{dir_name}"
                         self.logger.info(f"Deleting old backup: {full_path}")
                         self.rclone.delete_remote_directory(full_path)
 
         except Exception as e:
-            self.logger.warning(f"Error during cleanup for backup '{backup_item.name}': {e}")
+            self.logger.warning(
+                f"Error during cleanup for backup '{backup_item.name}': {e}"
+            )
+
     def create_backup_dry_run(self, backup_item: BackupItem) -> DryRunResult:
         """Perform dry run analysis for a backup item."""
         self.logger.info(f"Analyzing backup: {backup_item.name}")
-        
+
         try:
             # Create timestamped destination directory name
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
-            
+
             if self.is_local_mode:
                 destination = f"{self.local_destination}/{backup_item.name}_{timestamp}"
                 destination_type = "local"
             else:
                 destination = f"{backup_item.rclone_path}_{timestamp}"
                 destination_type = "remote"
-            
+
             # Analyze files that would be copied
             files_to_copy, excluded_files, total_size = analyze_backup_files(
-                backup_item.source_dir,
-                backup_item.max_age,
-                backup_item.max_size_bytes
+                backup_item.source_dir, backup_item.max_age, backup_item.max_size_bytes
             )
-            
+
             total_files = len(files_to_copy)
-            
+
             self.logger.info(
                 f"Analysis complete for '{backup_item.name}': "
                 f"{total_files} files, {format_size(total_size)}"
             )
-            
+
             return DryRunResult(
                 backup_name=backup_item.name,
                 source_dir=backup_item.source_dir,
@@ -822,34 +871,36 @@ class BackupManager:
                 total_size=total_size,
                 filtered_files=files_to_copy,
                 excluded_files=excluded_files,
-                success=True
+                success=True,
             )
-            
+
         except Exception as e:
             error_msg = f"Dry run analysis failed: {e}"
-            self.logger.error(f"Error analyzing backup '{backup_item.name}': {error_msg}")
-            
+            self.logger.error(
+                f"Error analyzing backup '{backup_item.name}': {error_msg}"
+            )
+
             return DryRunResult(
                 backup_name=backup_item.name,
                 source_dir=backup_item.source_dir,
                 destination="",
                 success=False,
-                error_message=error_msg
+                error_message=error_msg,
             )
 
-    def run_all_backups_dry_run(self, backup_list: List[BackupItem]) -> DryRunSummary:
+    def run_all_backups_dry_run(self, backup_list: list[BackupItem]) -> DryRunSummary:
         """Run dry run analysis for all backup items."""
         self.logger.info(f"Starting dry run analysis for {len(backup_list)} backups")
-        
+
         summary = DryRunSummary()
-        
+
         for backup_item in backup_list:
             result = self.create_backup_dry_run(backup_item)
             summary.add_result(result)
-        
+
         self.logger.info(
             f"Dry run analysis complete: {summary.successful_backups} successful, "
             f"{summary.failed_backups} failed, {format_size(summary.total_size)} total"
         )
-        
+
         return summary

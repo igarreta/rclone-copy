@@ -1,7 +1,6 @@
 """Schedule checking logic for cron-based backup scheduling."""
 
 from datetime import datetime
-from typing import List
 
 from croniter import croniter
 
@@ -12,7 +11,9 @@ class ScheduleChecker:
     """Handles evaluation of cron-based backup schedules."""
 
     @staticmethod
-    def should_run_backup(backup_item: BackupItem, current_time: datetime = None) -> bool:
+    def should_run_backup(
+        backup_item: BackupItem, current_time: datetime = None
+    ) -> bool:
         """
         Check if a backup should run based on its cron schedule.
 
@@ -39,15 +40,21 @@ class ScheduleChecker:
             # Check if the previous occurrence was today
             # Since we run daily at 5 AM, we check if the cron would have
             # triggered between midnight and now today
-            today_start = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+            today_start = current_time.replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
 
             return prev_occurrence >= today_start
 
         except Exception as e:
-            raise ValueError(f"Error evaluating schedule '{schedule}' for backup '{backup_item.name}': {e}")
+            raise ValueError(
+                f"Error evaluating schedule '{schedule}' for backup '{backup_item.name}': {e}"
+            )
 
     @staticmethod
-    def get_scheduled_backups(backup_list: List[BackupItem], current_time: datetime = None) -> List[BackupItem]:
+    def get_scheduled_backups(
+        backup_list: list[BackupItem], current_time: datetime = None
+    ) -> list[BackupItem]:
         """
         Filter backup list to only include rclone-enabled items scheduled to run.
 
@@ -69,13 +76,17 @@ class ScheduleChecker:
                     scheduled_backups.append(backup_item)
             except Exception as e:
                 # Log the error but don't stop processing other backups
-                print(f"Warning: Could not evaluate schedule for backup '{backup_item.name}': {e}")
+                print(
+                    f"Warning: Could not evaluate schedule for backup '{backup_item.name}': {e}"
+                )
                 continue
 
         return scheduled_backups
 
     @staticmethod
-    def next_run_time(backup_item: BackupItem, current_time: datetime = None) -> datetime:
+    def next_run_time(
+        backup_item: BackupItem, current_time: datetime = None
+    ) -> datetime:
         """
         Get the next time this backup is scheduled to run.
 
@@ -95,7 +106,9 @@ class ScheduleChecker:
             cron = croniter(schedule, current_time)
             return cron.get_next(datetime)
         except Exception as e:
-            raise ValueError(f"Error calculating next run time for backup '{backup_item.name}': {e}")
+            raise ValueError(
+                f"Error calculating next run time for backup '{backup_item.name}': {e}"
+            )
 
     @staticmethod
     def validate_schedule_format(schedule: str) -> bool:
