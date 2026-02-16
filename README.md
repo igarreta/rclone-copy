@@ -2,6 +2,12 @@
 
 Secondary backup copy system using rclone with cron-based scheduling. This Python application automatically backs up directories to remote storage with configurable scheduling, retention policies, and comprehensive monitoring.
 
+# Disinstalled on 2026-02-16
+Replaced by 
+
+- https://github.com/igarreta/bin for backup to backup_usb1
+- https://github.com/igarreta/backup_greven backups backup_usb1 to local removable disks and Amazon Glacier
+
 ## Features
 
 - **Dual backup modes**: Support for both rclone remote storage and local filesystem backups
